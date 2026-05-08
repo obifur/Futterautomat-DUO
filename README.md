@@ -7,8 +7,8 @@ Das Gerät gibt es in mehreren Ausführungen. Dieses Modell ist von	GROOKPET und
 - Es gibt einen eigenen Knopf für manuelles Füttern, unabhängig der Programmierung (Wichtig! Dieser wird zur Steuerung genutzt)
 - Eine Tastensperre aktiviert sich automatisch
 
-- 
-<img width="687" height="419" alt="grafik" src="https://github.com/user-attachments/assets/c48a7fcc-170a-4010-a893-9bbd7b5a7fe9" />
+
+<img width="500" height="305" alt="grafik" src="https://github.com/user-attachments/assets/c48a7fcc-170a-4010-a893-9bbd7b5a7fe9" />
 
 
 
