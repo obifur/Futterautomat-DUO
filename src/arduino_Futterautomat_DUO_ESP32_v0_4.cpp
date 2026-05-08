@@ -300,6 +300,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int len) {
 
   if (cmd == "reset") {
     sendEvent("ESP wird neu gestartet", "cmd");
+    Serial.println(">>> ESP RESTART <<<");
     delay(100);             // Nachricht noch senden lassen
     ESP.restart();
   }
