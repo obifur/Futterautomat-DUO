@@ -46,7 +46,7 @@ int portionTarget  = 0;
 int portionCurrent = 0;
 int unlockRetries  = 0;
 unsigned long feedCount = 0;
-bool isStart = false;
+int portionTimer = 0;
 
 /* ===================== FSM ===================== */
 enum FeedState {
@@ -54,6 +54,7 @@ enum FeedState {
   FEED_SIGNAL,
   FEED_WAIT_START,
   FEED_WAIT_END,
+  FEED_WAIT_END_TIMER,
   UNLOCK_PRESS,
   UNLOCK_WAIT,
   UNLOCK_RELEASE,
@@ -68,8 +69,8 @@ enum DeviceStatus {
   STATUS_NONE,
   STATUS_IDLE,        // AF AF 0F F2
   STATUS_LOCK_CHANGED,// 8F 8B 0F A7
-  STATUS_FEED_START,  // AB 0F 0F A7 8F 8B 27 - Manuelle Fütterung gestartet
-  STATUS_FEED_END     // 0F 0F 2F A7
+  STATUS_FEED_START,  // AB 0F 0F A7 8F 8B 27 || 8e 8f a3 1f ab ..[12] || 0f 0f 2f a7 8f [7] : Fütterung gestartet
+  STATUS_FEED_END     // 0F 0F 2F A7 || 0f 0f 2f f2 : Fütterung Ende  
 };
 
 DeviceStatus lastDeviceStatus = STATUS_NONE;
@@ -138,12 +139,15 @@ void serial2Event() {
 
 /* ===================== MESSAGE HANDLING ===================== */
 void msgHandling() {
+
   uint8_t buffer[64];
   int len = rxLen;
   memcpy(buffer, rxBytes, len);
+
   rxLen = 0;
   msgComplete = false;
 
+  // ===== DEBUG HEX LOG =====
   String hex;
   for (int i = 0; i < len; i++) {
     if (buffer[i] < 0x10) hex += "0";
@@ -156,64 +160,131 @@ void msgHandling() {
   Serial.print("]: ");
   Serial.println(hex);
 
-  if (msgDebug && state == IDLE) 
+  if (msgDebug && state == IDLE)
     queueEvent(hex, "debug");
 
-  isStart = false;
 
-  /* ===== Portion ENDE ===== */
+  /* ==========================================================
+   * 1. PORTION END
+   * Pattern: 0F 0F 2F XX
+   * ========================================================== */
   if (len >= 3 &&
-    buffer[0] == 0x0F && 
-    buffer[1] == 0x0F &&
-    buffer[2] == 0x2F) {
+      buffer[0] == 0x0F &&
+      buffer[1] == 0x0F &&
+      buffer[2] == 0x2F) {
+
+    // Portionen zählen
+    feedCount++;
+    portionTimer++;     // Hilfszähler für TIMER Fütterung über 
 
     portionFinished = true;
     lastDeviceStatus = STATUS_FEED_END;
-    feedCount++;
 
-    Serial.println(">>> PORTION END erkannt");
+    Serial.print(">>> PORTION END erkannt, count=");
     Serial.println(feedCount);
 
-  }
-    /* ===== Portion START ===== */
-  else if (
-    (len >= 3 && buffer[0] == 0xAB && buffer[1] == 0x0F && buffer[2] == 0x0F) || 
-    (len >= 3 && buffer[0] == 0x8E && buffer[1] == 0x8F && buffer[2] == 0xA3)) {
+    // Timer-Feed: weitere Portionen folgen
+    if (len >= 7) {
+      queueEvent("Portion " + String(portionTimer +1) + " gestartet (Timer)","info");
+    }
 
-    // FALL: manuelles Füttern am Gerät (entsperrt)
+    // Letzte Portion erkannt
+    if (len == 4) {
+      if (portionTarget == 0) {   // nur bei Timer-Fütterung!
+        queueEvent("Fütterung abgeschlossen (Timer)", "info");
+        state = IDLE; 
+      }
+      portionTimer = 0;   // reset
+    }
+
+    return;   // nichts weiter verarbeiten
+  }
+
+
+  /* ==========================================================
+   * 2. START (MQTT / manuell)
+   * Pattern: AB 0F 0F A7 [7]
+   * ========================================================== */
+  else if (len == 7 &&
+           buffer[0] == 0xAB &&
+           buffer[1] == 0x0F &&
+           buffer[2] == 0x0F &&
+           buffer[3] == 0xA7) {
+
+    // manuelle Fütterung direkt am Gerät
     if (state == IDLE && portionTarget == 0) {
 
       queueEvent("Manuelles Füttern am Gerät (entsperrt)", "info");
 
       portionTarget  = 1;
-      portionCurrent = 1;  // sofort 1!
+      portionCurrent = 1;
 
-      queueEvent("Portion 1 von 1 gestartet", "info");
+      queueEvent("Portion 1 von 1 gestartet (Gerät)", "info");
 
       state = FEED_WAIT_END;
       stateStart = millis();
-
-      return;   // wichtig → FSM nicht nochmal triggern
+      return;
     }
 
-    
+    // MQTT / FSM Feed
     if (portionCurrent < portionTarget) {
       portionStarted = true;
     }
 
     unlockRetries = 0;
+    return;
   }
 
-  /* ===== Tastensperre geändert ===== */
-  else if (len >= 4 && buffer[2] == 0x0F && buffer[3] == 0xA7) {
+
+  /* ==========================================================
+   * 3. START Timer / Geräteprogrammierung
+   * Pattern: 8E 8F A3 1F ...
+   * ========================================================== */
+  else if (len >= 7 &&
+           buffer[0] == 0x8E &&
+           buffer[1] == 0x8F &&
+           buffer[2] == 0xA3 &&
+           buffer[3] == 0x1F) {
+
+    // nur wenn noch keine aktive FSM läuft
+    if (state == IDLE && portionTarget == 0) {
+
+      portionTimer = 0;
+
+      queueEvent("Portion 1 gestartet (Timer)", "info");
+
+      state = FEED_WAIT_END_TIMER;
+      stateStart = millis();
+    }
+
+    return;
+  }
+
+
+  /* ==========================================================
+   * 4. Tastensperre geändert
+   * ========================================================== */
+  else if (len >= 4 &&
+           buffer[0] == 0x8F &&
+           buffer[1] == 0x8B &&
+           buffer[2] == 0x0F &&
+           buffer[3] == 0xA7) {
+
     queueEvent("Tastensperre Status geändert", "info");
     lastDeviceStatus = STATUS_LOCK_CHANGED;
+    return;
   }
 
-  /* ===== AF AF 0F F2 == IDLE ODER Tastendruck bei Sperre ===== */
-  else if (len >= 4 && buffer[2] == 0x0F && buffer[3] == 0xF2) {
-    
-    /* ===== MANUELLER FÜTTER-INTENT ===== */
+
+  /* ==========================================================
+   * 5. IDLE / Knopfdruck am Gerät
+   * ========================================================== */
+  else if (len >= 4 &&
+           buffer[0] == 0xAF &&
+           buffer[1] == 0xAF &&
+           buffer[2] == 0x0F &&
+           buffer[3] == 0xF2) {
+
     if (lastDeviceStatus == STATUS_IDLE &&
         state == IDLE &&
         portionTarget == 0) {
@@ -229,12 +300,14 @@ void msgHandling() {
 
       state = UNLOCK_PRESS;
       stateStart = millis();
-    } else {
-    queueEvent("Leerlauf", "info");
+    }
+    else {
+      queueEvent("Leerlauf", "info");
     }
 
     lastDeviceStatus = STATUS_IDLE;
-  }  
+    return;
+  }
 }
 
 /* ===================== START FEEDING (MQTT) ===================== */
@@ -264,10 +337,18 @@ void feedingStateMachine() {
       break;
 
     case FEED_WAIT_START:
+      // Falls vorher schon END erkannt wurde -> keine Unlock-Logik
+      if (portionFinished) {
+        state = FEED_WAIT_END;
+        stateStart = millis();
+        break;
+      }
+
       if (millis() - stateStart > FEED_PULSE_DURATION_MS) {
         digitalWrite(FEED_PIN, LOW);
       }
-
+      
+      // Erste Futterportion angefordert
       if (portionStarted && portionCurrent < portionTarget) {
         portionStarted = false;
         portionCurrent++;
@@ -300,6 +381,12 @@ void feedingStateMachine() {
         portionFinished = false;
         state = (portionCurrent >= portionTarget) ? FINISHED : FEED_SIGNAL;
         stateStart = millis();
+      }
+      break;
+
+    case FEED_WAIT_END_TIMER:
+      if (portionFinished) {
+        portionFinished = false;
       }
       break;
 
