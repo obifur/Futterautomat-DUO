@@ -23,6 +23,11 @@ constexpr int WATCHDOG_TIMEOUT_SEC = 10;
 WiFiClient wifiClient;
 PubSubClient mqtt(wifiClient);
 bool mqttWasConnected = false;
+unsigned int failCount = 0;
+
+String eventQueue[10];
+int head = 0;
+int tail = 0;
 
 /* ===================== SERIAL2 ===================== */
 uint8_t rxBytes[64];
@@ -35,6 +40,13 @@ bool msgDebug = false;
 /* ===================== PORTION FLAGS ===================== */
 bool portionStarted  = false;
 bool portionFinished = false;
+
+/* ===================== FEED CONTROL ===================== */
+int portionTarget  = 0;
+int portionCurrent = 0;
+int unlockRetries  = 0;
+unsigned long feedCount = 0;
+bool isStart = false;
 
 /* ===================== FSM ===================== */
 enum FeedState {
@@ -51,38 +63,64 @@ enum FeedState {
 FeedState state = IDLE;
 unsigned long stateStart = 0;
 
-/* ===================== FEED CONTROL ===================== */
-int portionTarget  = 0;
-int portionCurrent = 0;
-int unlockRetries  = 0;
-
 /* ===================== DEVICE STATUS TRACKING ===================== */
 enum DeviceStatus {
   STATUS_NONE,
   STATUS_IDLE,        // AF AF 0F F2
   STATUS_LOCK_CHANGED,// 8F 8B 0F A7
-  STATUS_FEED_START,  // AB ...
+  STATUS_FEED_START,  // AB 0F 0F A7 8F 8B 27 - Manuelle Fütterung gestartet
   STATUS_FEED_END     // 0F 0F 2F A7
 };
 
 DeviceStatus lastDeviceStatus = STATUS_NONE;
 
-/* ===================== MQTT EVENT SEND ===================== */
-void sendEvent(const String& msg, const String& type) {
+/* ===================== MQTT QUEUE EVENT ===================== */
+void queueEvent(const String& msg, const String& type) {
   JsonDocument doc;
+
   doc["device"] = DEVICE_NAME;
   doc["type"]   = type;
   doc["msg"]    = msg;
+  doc["feedCount"] = feedCount; 
   doc["ts"]     = millis();
 
-  char payload[256];
-  serializeJson(doc, payload);
-  mqtt.publish(MQTT_TOPIC_EVENT, payload);
+  if (msgDebug) {
+    doc["mqttFailCount"]  = failCount;
+  }
 
-  Serial.print("MQTT EVENT [");
-  Serial.print(type);
-  Serial.print("] ");
-  Serial.println(msg);
+  String payload;
+  serializeJson(doc, payload);
+
+
+  eventQueue[head] = payload;
+  head = (head + 1) % 10;
+
+
+  // overflow protection
+  if (head == tail) {
+    Serial.println("Event Queue overflow!");
+    tail = (tail + 1) % 10; // ältestes Element verwerfen
+  }
+}
+
+/* ===================== MQTT PROCESS EVENT QUEUE ===================== */
+void processEventQueue() {
+
+  if (tail == head) return;           // nichts zu senden
+  if (!mqtt.connected()) return;      // nicht verbunden
+
+  
+  bool ok = mqtt.publish(MQTT_TOPIC_EVENT, eventQueue[tail].c_str());
+
+  if (ok) {
+    tail = (tail + 1) % 10;   // nur wenn erfolgreich
+  } else {
+    failCount++;
+    Serial.println("MQTT publish FAILED!");
+  }
+
+  delay(2);
+
 }
 
 /* ===================== SERIAL2 EVENT ===================== */
@@ -118,21 +156,39 @@ void msgHandling() {
   Serial.print("]: ");
   Serial.println(hex);
 
-  if (msgDebug) 
-    sendEvent(hex, "debug");
+  if (msgDebug && state == IDLE) 
+    queueEvent(hex, "debug");
 
-  /* ===== Portion START ===== */
-  if (len == 7) {
+  isStart = false;
+
+  /* ===== Portion ENDE ===== */
+  if (len >= 3 &&
+    buffer[0] == 0x0F && 
+    buffer[1] == 0x0F &&
+    buffer[2] == 0x2F) {
+
+    portionFinished = true;
+    lastDeviceStatus = STATUS_FEED_END;
+    feedCount++;
+
+    Serial.println(">>> PORTION END erkannt");
+    Serial.println(feedCount);
+
+  }
+    /* ===== Portion START ===== */
+  else if (
+    (len >= 3 && buffer[0] == 0xAB && buffer[1] == 0x0F && buffer[2] == 0x0F) || 
+    (len >= 3 && buffer[0] == 0x8E && buffer[1] == 0x8F && buffer[2] == 0xA3)) {
 
     // FALL: manuelles Füttern am Gerät (entsperrt)
     if (state == IDLE && portionTarget == 0) {
 
-      sendEvent("Manuelles Füttern am Gerät (entsperrt)", "info");
+      queueEvent("Manuelles Füttern am Gerät (entsperrt)", "info");
 
       portionTarget  = 1;
       portionCurrent = 1;  // sofort 1!
 
-      sendEvent("Portion 1 von 1 gestartet", "info");
+      queueEvent("Portion 1 von 1 gestartet", "info");
 
       state = FEED_WAIT_END;
       stateStart = millis();
@@ -140,32 +196,29 @@ void msgHandling() {
       return;   // wichtig → FSM nicht nochmal triggern
     }
 
-  // normaler Ablauf (MQTT oder interne FSM)
-  portionStarted = true;
-  unlockRetries = 0;
-  }
+    
+    if (portionCurrent < portionTarget) {
+      portionStarted = true;
+    }
 
-  /* ===== Portion ENDE ===== */
-  else if (len == 4 && buffer[2] == 0x2F && buffer[3] == 0xA7) {
-    portionFinished = true;
-    lastDeviceStatus = STATUS_FEED_END;
+    unlockRetries = 0;
   }
 
   /* ===== Tastensperre geändert ===== */
-  else if (len == 4 && buffer[2] == 0x0F && buffer[3] == 0xA7) {
-    sendEvent("Tastensperre Status geändert", "info");
+  else if (len >= 4 && buffer[2] == 0x0F && buffer[3] == 0xA7) {
+    queueEvent("Tastensperre Status geändert", "info");
     lastDeviceStatus = STATUS_LOCK_CHANGED;
   }
 
   /* ===== AF AF 0F F2 == IDLE ODER Tastendruck bei Sperre ===== */
-  else if (len == 4 && buffer[2] == 0x0F && buffer[3] == 0xF2) {
+  else if (len >= 4 && buffer[2] == 0x0F && buffer[3] == 0xF2) {
     
     /* ===== MANUELLER FÜTTER-INTENT ===== */
     if (lastDeviceStatus == STATUS_IDLE &&
         state == IDLE &&
         portionTarget == 0) {
 
-      sendEvent("Manuelles Füttern am Gerät erkannt", "info");
+      queueEvent("Manuelles Füttern am Gerät erkannt", "info");
 
       portionTarget  = 1;
       portionCurrent = 0;
@@ -177,11 +230,11 @@ void msgHandling() {
       state = UNLOCK_PRESS;
       stateStart = millis();
     } else {
-    sendEvent("Leerlauf", "info");
+    queueEvent("Leerlauf", "info");
     }
 
     lastDeviceStatus = STATUS_IDLE;
-  }
+  }  
 }
 
 /* ===================== START FEEDING (MQTT) ===================== */
@@ -190,7 +243,7 @@ void startFeeding(int portions) {
   portionCurrent = 0;
   unlockRetries  = 0;
 
-  sendEvent("Starte Fütterung: " + String(portionTarget) + " Portion(en)", "cmd");
+  queueEvent("Starte Fütterung: " + String(portionTarget) + " Portion(en)", "cmd");
 
   state = FEED_SIGNAL;
   stateStart = millis();
@@ -219,7 +272,7 @@ void feedingStateMachine() {
         portionStarted = false;
         portionCurrent++;
 
-        sendEvent(
+        queueEvent(
           "Portion " + String(portionCurrent) +
           " von " + String(portionTarget) + " gestartet",
           "info"
@@ -232,10 +285,10 @@ void feedingStateMachine() {
 
       if (millis() - stateStart > FEED_START_ACK_TIMEOUT_MS) {
         if (unlockRetries++ >= UNLOCK_RETRY_MAX) {
-          sendEvent("Abbruch: Tastensperre nicht freigegeben", "error");
+          queueEvent("Abbruch: Tastensperre nicht freigegeben", "error");
           state = IDLE;
         } else {
-          sendEvent("Start nicht quittiert – entsperre", "info");
+          queueEvent("Tastensperre lösen", "info");
           state = UNLOCK_PRESS;
           stateStart = millis();
         }
@@ -269,7 +322,7 @@ void feedingStateMachine() {
       break;
 
     case FINISHED:
-      sendEvent("Fütterung abgeschlossen", "info");
+      queueEvent("Fütterung abgeschlossen", "info");
       portionTarget  = 0;
       portionCurrent = 0;
       state = IDLE;
@@ -295,11 +348,11 @@ void mqttCallback(char* topic, byte* payload, unsigned int len) {
 
   if (cmd == "debug") {    
     msgDebug = !msgDebug;
-    sendEvent(msgDebug ? "Debug ein" : "Debug aus", "debug");
+    queueEvent(msgDebug ? "Debug ein" : "Debug aus", "debug");
   }
 
   if (cmd == "reset") {
-    sendEvent("ESP wird neu gestartet", "cmd");
+    queueEvent("ESP wird neu gestartet", "cmd");
     Serial.println(">>> ESP RESTART <<<");
     delay(100);             // Nachricht noch senden lassen
     ESP.restart();
@@ -326,6 +379,7 @@ void setup() {
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
   mqtt.setCallback(mqttCallback);
   mqtt.setKeepAlive(60);
+  mqtt.setBufferSize(512);
 
   esp_task_wdt_init(WATCHDOG_TIMEOUT_SEC, true);
   esp_task_wdt_add(NULL);
@@ -344,8 +398,7 @@ void loop() {
 
     if (mqttWasConnected) {
           mqttWasConnected = false;
-          Serial.println("MQTT Verbindung verloren");
-          sendEvent("MQTT Verbindung verloren", "status");
+          Serial.println("MQTT Verbindung verloren");          
         }
 
     if (mqtt.connect(
@@ -360,16 +413,18 @@ void loop() {
       mqtt.subscribe(MQTT_TOPIC_SUB);
 
       Serial.println("MQTT verbunden");
-      sendEvent("MQTT verbunden", "status");
-
+      queueEvent("MQTT neu verbunden", "status");
+    
       mqttWasConnected = true;
       mqtt.publish(MQTT_TOPIC_STATUS, "online", true);
-
     }
   }
 
   /* ===== MQTT LOOP ===== */
   mqtt.loop();
+
+  /* ===== SEND MQTT QUEUE ===== */
+  processEventQueue();
 
   /* ===== SERIAL2 EMPFANG vom Futterautomat ===== */
   serial2Event();
