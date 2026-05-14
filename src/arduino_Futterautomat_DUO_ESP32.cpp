@@ -491,11 +491,11 @@ void loop() {
       wifiWasConnected = true;
       Serial.println("WIFI neu verbunden");
       wifiReconnectCount++;
-    } else {
-      if (wifiWasConnected) {
-      wifiWasConnected = false;
-      Serial.println("WIFI verloren!");
-      }
+    } 
+  } else {
+    if (wifiWasConnected) {
+    wifiWasConnected = false;
+    Serial.println("WIFI verloren!");
     }
   }
 
