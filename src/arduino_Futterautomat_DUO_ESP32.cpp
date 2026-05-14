@@ -19,11 +19,16 @@ constexpr unsigned long SERIAL_MSG_TIMEOUT_MS     = 30;
 constexpr int UNLOCK_RETRY_MAX = 2;
 constexpr int WATCHDOG_TIMEOUT_SEC = 10;
 
-/* ===================== MQTT ===================== */
+/* ===================== MQTT / WIFI ===================== */
 WiFiClient wifiClient;
 PubSubClient mqtt(wifiClient);
 bool mqttWasConnected = false;
-unsigned int failCount = 0;
+unsigned long lastReconnectAttempt = 0;   // Throttle -> loop()
+unsigned int mqttSendFailCount = 0;
+unsigned int mqttReconnectCount = 0;
+
+bool wifiWasConnected = true;
+unsigned int wifiReconnectCount = 0;
 
 String eventQueue[10];
 int head = 0;
@@ -84,9 +89,12 @@ void queueEvent(const String& msg, const String& type) {
   doc["msg"]    = msg;
   doc["feedCount"] = feedCount; 
   doc["ts"]     = millis();
-
-  if (msgDebug) {
-    doc["mqttFailCount"]  = failCount;
+  doc["mqttSendFailCount"]  = mqttSendFailCount;
+  doc["mqttReconnectCount"]  = mqttReconnectCount;
+  doc["WifiReconnectCount"]  = wifiReconnectCount;
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    doc["wifi_rssi"] = WiFi.RSSI();
   }
 
   String payload;
@@ -116,12 +124,9 @@ void processEventQueue() {
   if (ok) {
     tail = (tail + 1) % 10;   // nur wenn erfolgreich
   } else {
-    failCount++;
+    mqttSendFailCount++;
     Serial.println("MQTT publish FAILED!");
   }
-
-  delay(2);
-
 }
 
 /* ===================== SERIAL2 EVENT ===================== */
@@ -480,30 +485,51 @@ void loop() {
   /* ===== WATCHDOG ===== */
   esp_task_wdt_reset();
 
+  /* ===== WIFI STATUS TRACKING ===== */
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!wifiWasConnected) {
+      wifiWasConnected = true;
+      Serial.println("WIFI neu verbunden");
+      wifiReconnectCount++;
+    } else {
+      if (wifiWasConnected) {
+      wifiWasConnected = false;
+      Serial.println("WIFI verloren!");
+      }
+    }
+  }
+
   /* ===== MQTT VERBINDUNG ===== */
   if (!mqtt.connected()) {
 
     if (mqttWasConnected) {
-          mqttWasConnected = false;
-          Serial.println("MQTT Verbindung verloren");          
-        }
+      mqttWasConnected = false;
+      Serial.println("MQTT Verbindung verloren");          
+    }
 
-    if (mqtt.connect(
-          MQTT_CLIENT_ID,
-          MQTT_USERNAME,
-          MQTT_PASSWORD,
-          MQTT_TOPIC_STATUS,
-          1,
-          true,
-          MQTT_LWT_MSG)) {
-
-      mqtt.subscribe(MQTT_TOPIC_SUB);
-
-      Serial.println("MQTT verbunden");
-      queueEvent("MQTT neu verbunden", "status");
+    if (millis() - lastReconnectAttempt > 5000) {
+      
+      lastReconnectAttempt = millis();
     
-      mqttWasConnected = true;
-      mqtt.publish(MQTT_TOPIC_STATUS, "online", true);
+      if (mqtt.connect(
+        MQTT_CLIENT_ID,
+        MQTT_USERNAME,
+        MQTT_PASSWORD,
+        MQTT_TOPIC_STATUS,
+        1,
+        true,
+        MQTT_LWT_MSG)) {
+
+        mqtt.subscribe(MQTT_TOPIC_SUB);
+
+        Serial.println("MQTT neu verbunden");
+        queueEvent("MQTT neu verbunden", "status");
+      
+        mqttWasConnected = true;
+        mqtt.publish(MQTT_TOPIC_STATUS, "online", true);
+
+        mqttReconnectCount++;
+      }
     }
   }
 
@@ -511,7 +537,9 @@ void loop() {
   mqtt.loop();
 
   /* ===== SEND MQTT QUEUE ===== */
-  processEventQueue();
+  for (int i = 0; i < 3; i++) {
+    processEventQueue();
+  }
 
   /* ===== SERIAL2 EMPFANG vom Futterautomat ===== */
   serial2Event();
