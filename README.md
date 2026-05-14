@@ -21,3 +21,6 @@ Brands: YUGUPAM, VIVIPAL, PELUVIO, Qpets, Gimars
 - manuelles Füttern integriert unter Umgehung der Tastensperre
 - Watchdog + FSM
 - Serial Protokoll Reverse Engineered
+
+
+..eine genauere Beschreibung mit Fotos folgt bei Gelegenheit...
