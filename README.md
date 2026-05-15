@@ -60,7 +60,7 @@ Die Knöpfe "Fütterung" und "Tastensperre" werden jeweil über ein NPN Transist
 
 # Details zur Funkitonsweise
 ## Serielle Schnittstelle
-Über die serielle Schnittstelle kann die Rückmeldung nach einem Knopfdruck, am Gerät programmierte Fütterungen oder Zustandsänderungen ausgewertet werden.
+Über die serielle Schnittstelle wird die Rückmeldung nach einem Knopfdruck, am Gerät programmierte Fütterungen oder Zustandsänderungen ausgewertet.
 
 ## Manuelle Fütterung am Gerät über Knopfdruck
 
