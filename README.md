@@ -8,7 +8,7 @@ Das Gerät gibt es in mehreren Ausführungen. Dieses Modell ist von	GROOKPET und
 - Eine Tastensperre aktiviert sich automatisch
 
 
-<img width="500" height="305" alt="grafik" src="https://github.com/user-attachments/assets/c48a7fcc-170a-4010-a893-9bbd7b5a7fe9" />
+<img width="400" src="https://github.com/user-attachments/assets/c48a7fcc-170a-4010-a893-9bbd7b5a7fe9" /> <img width="300" src="https://github.com/user-attachments/assets/3b3893e1-82e5-4945-b8b4-9e95f3644ba3" />
 
 
 
@@ -47,6 +47,15 @@ Beispiel für ein MQTT_TOPIC_EVENT:
 Hinweise: 
 - Es werden alle ausgegebene Portionen erfasst - also neben den über die MQTT befehligten Portionen auch die manuell ausgelösten Fütterungen am Gerät selbst oder auch die am Gerät programmierten Mahlzeiten.
 - Weil die Tastensperre für die manuelle Fütterung echt nervt, lasse ich sie nach einem Knopfdruck auf die tastensperre oder Fütterungstaste selbsttätig entsperren und die Fütterung ausführen. Mit dem Registrieren des Knopfdrucks und der Entsperrung dauert das allerdings ~4 s bis zum Start der Portionsausgabe.
+
+# Hardware Modifikation
+Im konkreten fall wurde ein ESP-32 NodeMCU Development Board DevKit C V4 benutzt - andere ESP32 Boards funktionieren aber meist ohne Anpassung genauso.
+Die Knöpfe "Fütterung" und "Tastensperre" werden jeweil über ein NPN Transistor (hier BC 637) an die Tasten angeschlossen (mit z.B. 1 kΩ an Basis) und zum Auslösen auf 0 V geschaltet. Außerdem musste der Pin 16 (RX) über einen Pull‑Up (z. B. 10 kΩ auf 3.3 V), damit er einen definierten High‑Pegel hat.
+
+<img width="300" src="https://github.com/user-attachments/assets/69f8fb02-7251-4d68-a1d1-abd53ba96baf" /> <img width="300" src="https://github.com/user-attachments/assets/2765892e-ed53-420e-8f63-5b740fb1e6fe" />
+
+<img width="300" src="https://github.com/user-attachments/assets/740fa80e-b2a4-460c-bce0-d22ab9a3e772" />
+<img width="300" src="https://github.com/user-attachments/assets/05fb560a-4c97-4c4b-b1db-3661623ad422" />
 
 
 # Details zur Funkitonsweise
