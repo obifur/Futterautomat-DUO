@@ -99,4 +99,3 @@ Serial2 RX [7]:  0f 0f 2f f2 8f 8b 27                -> Portion 4 gestartet
 Serial2 RX [4]:  0f 0f 2f a7                         -> Fütterung beendet 
 ```
 
-..ein paat Fotos folgen bei Gelegenheit...
