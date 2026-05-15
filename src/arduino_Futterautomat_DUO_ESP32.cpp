@@ -23,6 +23,7 @@ constexpr int WATCHDOG_TIMEOUT_SEC = 10;
 WiFiClient wifiClient;
 PubSubClient mqtt(wifiClient);
 bool mqttWasConnected = false;
+bool mqttEverConnected = false;
 unsigned long lastReconnectAttempt = 0;   // Throttle -> loop()
 unsigned int mqttSendFailCount = 0;
 unsigned int mqttReconnectCount = 0;
@@ -507,7 +508,7 @@ void loop() {
       Serial.println("MQTT Verbindung verloren");          
     }
 
-    if (millis() - lastReconnectAttempt > 5000) {
+    if (millis() - lastReconnectAttempt > 5000) { // nicht ständig prüfen -> throttle
       
       lastReconnectAttempt = millis();
     
@@ -524,11 +525,15 @@ void loop() {
 
         Serial.println("MQTT neu verbunden");
         queueEvent("MQTT neu verbunden", "status");
-      
-        mqttWasConnected = true;
-        mqtt.publish(MQTT_TOPIC_STATUS, "online", true);
 
-        mqttReconnectCount++;
+        if (mqttEverConnected) {
+            mqttReconnectCount++;
+          }
+
+        mqttEverConnected = true;
+        mqttWasConnected = true;
+
+        mqtt.publish(MQTT_TOPIC_STATUS, "online", true);
       }
     }
   }
