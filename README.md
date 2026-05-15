@@ -3,7 +3,7 @@ Das Gerät gibt es in mehreren Ausführungen. Dieses Modell ist von	GROOKPET und
 # Eigenschaften dieses Modells (GROOKPET):
 - 5-Liter Edelstahl-Trockenfutterbehälter
 - zwei Edelstahlnäpfe
-- Steuerung: Im originalzustand können am Gerät 4 Mahlzeiten über ien kleine LCD-Display programmiert werden
+- Steuerung: Im Originalzustand können am Gerät 4 Mahlzeiten mit jeweils mehreren Portionen über ein kleine LCD-Display programmiert werden
 - Es gibt einen eigenen Knopf für manuelles Füttern, unabhängig der Programmierung (Wichtig! Dieser wird zur Steuerung genutzt)
 - Eine Tastensperre aktiviert sich automatisch
 
