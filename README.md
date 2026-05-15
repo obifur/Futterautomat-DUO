@@ -18,7 +18,7 @@ Brands: YUGUPAM, VIVIPAL, PELUVIO, Qpets, Gimars
 
 # Eigenschaften des "Futterautomat DUO (ESP32)" nach dem Umbau
 - MQTT (WLAN) gesteuert (z.B. über Home Assistant)
-- manuelles Füttern integriert unter Umgehung der Tastensperre
+- manuelles und Timerbasierte Fütterung am Gerät berücksichtigt
 - Watchdog + FSM
 - Serial Protokoll (teilweise) Reverse Engineered
 
