@@ -16,6 +16,9 @@ constexpr unsigned long FEED_START_ACK_TIMEOUT_MS = 800;
 constexpr unsigned long UNLOCK_PRESS_DURATION_MS  = 2600;
 constexpr unsigned long SERIAL_MSG_TIMEOUT_MS     = 30;
 
+unsigned long lastLoopTime = 0;
+unsigned long maxLoopTime = 0;
+
 constexpr int UNLOCK_RETRY_MAX = 2;
 constexpr int WATCHDOG_TIMEOUT_SEC = 10;
 
@@ -24,6 +27,7 @@ WiFiClient wifiClient;
 PubSubClient mqtt(wifiClient);
 bool mqttWasConnected = false;
 bool mqttEverConnected = false;
+bool debugTiming = false;
 unsigned long lastReconnectAttempt = 0;   // Throttle -> loop()
 unsigned int mqttSendFailCount = 0;
 unsigned int mqttReconnectCount = 0;
@@ -98,7 +102,7 @@ void queueEvent(const String& msg, const String& type) {
     doc["wifi_rssi"] = WiFi.RSSI();
   }
 
-  String payload;
+  char payload[256];
   serializeJson(doc, payload);
 
 
@@ -108,7 +112,7 @@ void queueEvent(const String& msg, const String& type) {
 
   // overflow protection
   if (head == tail) {
-    Serial.println("Event Queue overflow!");
+    if (msgDebug) Serial.println("Event Queue overflow!");
     tail = (tail + 1) % 10; // ältestes Element verwerfen
   }
 }
@@ -126,7 +130,7 @@ void processEventQueue() {
     tail = (tail + 1) % 10;   // nur wenn erfolgreich
   } else {
     mqttSendFailCount++;
-    Serial.println("MQTT publish FAILED!");
+    if (msgDebug) Serial.println("MQTT publish FAILED!");
   }
 }
 
@@ -154,21 +158,23 @@ void msgHandling() {
   msgComplete = false;
 
   // ===== DEBUG HEX LOG =====
-  String hex;
-  for (int i = 0; i < len; i++) {
-    if (buffer[i] < 0x10) hex += "0";
-    hex += String(buffer[i], HEX);
-    hex += " ";
+  
+  if (msgDebug) {
+    String hex;
+    for (int i = 0; i < len; i++) {
+      if (buffer[i] < 0x10) hex += "0";
+      hex += String(buffer[i], HEX);
+      hex += " ";
+    }
+  
+    Serial.print("Serial2 RX [");
+    Serial.print(len);
+    Serial.print("]: ");
+    Serial.println(hex);
+  
+    if (msgDebug && state == IDLE)
+      queueEvent(hex, "debug");
   }
-
-  Serial.print("Serial2 RX [");
-  Serial.print(len);
-  Serial.print("]: ");
-  Serial.println(hex);
-
-  if (msgDebug && state == IDLE)
-    queueEvent(hex, "debug");
-
 
   /* ==========================================================
    * 1. PORTION END
@@ -444,6 +450,11 @@ void mqttCallback(char* topic, byte* payload, unsigned int len) {
     queueEvent(msgDebug ? "Debug ein" : "Debug aus", "debug");
   }
 
+  if (cmd == "debugTiming") {
+    debugTiming = !debugTiming;
+    queueEvent(debugTiming ? "Timing Debug ein" : "Timing Debug aus", "debug");
+  }
+
   if (cmd == "reset") {
     queueEvent("ESP wird neu gestartet", "cmd");
     Serial.println(">>> ESP RESTART <<<");
@@ -463,6 +474,7 @@ void setup() {
   Serial.println("=== Futtertempel DUO startet ===");
 
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.setSleep(false);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
@@ -471,7 +483,7 @@ void setup() {
 
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
   mqtt.setCallback(mqttCallback);
-  mqtt.setKeepAlive(60);
+  mqtt.setKeepAlive(30);
   mqtt.setBufferSize(512);
 
   esp_task_wdt_init(WATCHDOG_TIMEOUT_SEC, true);
@@ -483,29 +495,50 @@ void setup() {
 /* ===================== LOOP ===================== */
 void loop() {
 
+  unsigned long t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0;
+
+  if (debugTiming) t0 = micros();
+
   /* ===== WATCHDOG ===== */
   esp_task_wdt_reset();
 
+  if (debugTiming) t1 = micros();
+
   /* ===== WIFI STATUS TRACKING ===== */
-  if (WiFi.status() == WL_CONNECTED) {
+  if (WiFi.status() == WL_CONNECTED) {    // Wifi ist verbunden
+
     if (!wifiWasConnected) {
       wifiWasConnected = true;
-      Serial.println("WIFI neu verbunden");
       wifiReconnectCount++;
-    } 
-  } else {
-    if (wifiWasConnected) {
-    wifiWasConnected = false;
-    Serial.println("WIFI verloren!");
+      
+      if (msgDebug) {
+        Serial.println("WIFI neu verbunden");
+        queueEvent("WIFI neu verbunden", "debug");
+      }
+    }
+  } 
+  else {
+    if (wifiWasConnected) {                // Wifi ist nicht verbunden
+      wifiWasConnected = false;
+
+      if (msgDebug) {
+        Serial.println("WIFI verloren!");
+        queueEvent("WIFI verloren!", "debug");
+      }
     }
   }
+
+  if (debugTiming) t2 = micros();
 
   /* ===== MQTT VERBINDUNG ===== */
   if (!mqtt.connected()) {
 
     if (mqttWasConnected) {
       mqttWasConnected = false;
-      Serial.println("MQTT Verbindung verloren");          
+      if (msgDebug) {
+        Serial.println("MQTT Verbindung verloren");
+        queueEvent("MQTT Verbindung verloren", "debug");
+      }
     }
 
     if (millis() - lastReconnectAttempt > 5000) { // nicht ständig prüfen -> throttle
@@ -523,8 +556,10 @@ void loop() {
 
         mqtt.subscribe(MQTT_TOPIC_SUB);
 
-        Serial.println("MQTT neu verbunden");
-        queueEvent("MQTT neu verbunden", "status");
+        if (msgDebug) { 
+          Serial.println("MQTT neu verbunden");
+          queueEvent("MQTT neu verbunden", "debug");
+        }
 
         if (mqttEverConnected) {
             mqttReconnectCount++;
@@ -538,13 +573,19 @@ void loop() {
     }
   }
 
+  if (debugTiming) t3 = micros();
+
   /* ===== MQTT LOOP ===== */
   mqtt.loop();
+
+  if (debugTiming) t4 = micros();
 
   /* ===== SEND MQTT QUEUE ===== */
   for (int i = 0; i < 3; i++) {
     processEventQueue();
   }
+
+  if (debugTiming) t5 = micros();
 
   /* ===== SERIAL2 EMPFANG vom Futterautomat ===== */
   serial2Event();
@@ -555,6 +596,21 @@ void loop() {
   /* ===== FSM ===== */
   feedingStateMachine();
 
+  /* ===== TIMING REPORT ===== */
+  static unsigned long lastTimingReport = 0;
+
+  if (debugTiming && millis() - lastTimingReport > 5000) {
+    lastTimingReport = millis();
+
+    String msg =
+      "t(us): wd " + String(t1 - t0)       // watchdog + start
+      + " | wifi " + String(t2 - t1)       // wifi
+      + " | mqttConn " + String(t3 - t2)   // mqtt connect
+      + " | mqttLoop " + String(t4 - t3)   // mqtt.loop
+      + " | queue " + String(t5 - t4);     // queue
+
+    queueEvent(msg, "timing");
+  }
 
   /* ===== WLAN / TCP YIELD ===== */
   delay(1);
