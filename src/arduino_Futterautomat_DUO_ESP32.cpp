@@ -192,8 +192,10 @@ void msgHandling() {
     portionFinished = true;
     lastDeviceStatus = STATUS_FEED_END;
 
-    Serial.print(">>> PORTION END erkannt, count=");
-    Serial.println(feedCount);
+    if (msgDebug) {
+      Serial.print(">>> PORTION END erkannt, count=");
+      Serial.println(feedCount);
+    }
 
     // Timer-Feed: weitere Portionen folgen
     if (len >= 7) {
@@ -475,6 +477,7 @@ void setup() {
 
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   WiFi.setSleep(false);
+
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
@@ -483,7 +486,7 @@ void setup() {
 
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
   mqtt.setCallback(mqttCallback);
-  mqtt.setKeepAlive(30);
+  mqtt.setKeepAlive(20);
   mqtt.setBufferSize(512);
 
   esp_task_wdt_init(WATCHDOG_TIMEOUT_SEC, true);
@@ -503,6 +506,11 @@ void loop() {
   esp_task_wdt_reset();
 
   if (debugTiming) t1 = micros();
+
+    /* ===== MQTT LOOP ===== */
+  mqtt.loop();
+
+  if (debugTiming) t2 = micros();
 
   /* ===== WIFI STATUS TRACKING ===== */
   if (WiFi.status() == WL_CONNECTED) {    // Wifi ist verbunden
@@ -528,7 +536,7 @@ void loop() {
     }
   }
 
-  if (debugTiming) t2 = micros();
+  if (debugTiming) t3 = micros();
 
   /* ===== MQTT VERBINDUNG ===== */
   if (!mqtt.connected()) {
@@ -573,11 +581,6 @@ void loop() {
     }
   }
 
-  if (debugTiming) t3 = micros();
-
-  /* ===== MQTT LOOP ===== */
-  mqtt.loop();
-
   if (debugTiming) t4 = micros();
 
   /* ===== SEND MQTT QUEUE ===== */
@@ -603,11 +606,11 @@ void loop() {
     lastTimingReport = millis();
 
     String msg =
-      "t(us): wd " + String(t1 - t0)       // watchdog + start
-      + " | wifi " + String(t2 - t1)       // wifi
-      + " | mqttConn " + String(t3 - t2)   // mqtt connect
-      + " | mqttLoop " + String(t4 - t3)   // mqtt.loop
-      + " | queue " + String(t5 - t4);     // queue
+      "t[µs]: wd " + String(t1 - t0)          // watchdog + start
+      + " | wifi " + String(t2 - t1)          // mqtt.loop
+      + " | mqttConn " + String(t3 - t2)      // wifi
+      + " | mqttLoop " + String(t4 - t3)      // mqtt connect
+      + " | mqttQueue " + String(t5 - t4);    // queue
 
     queueEvent(msg, "timing");
   }
