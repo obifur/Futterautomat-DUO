@@ -177,8 +177,8 @@ void msgHandling() {
   }
 
   /* ==========================================================
-   * 1. PORTION END
-   * Pattern: 0F 0F 2F XX
+   * 1. PORTION ENDE und ggf. WEITERE
+   * Pattern: 0F 0F 2F ?? [4] ODER [7]
    * ========================================================== */
   if (len >= 3 &&
       buffer[0] == 0x0F &&
@@ -217,7 +217,7 @@ void msgHandling() {
 
   /* ==========================================================
    * 2. START (MQTT / manuell)
-   * Pattern: AB 0F 0F A7 [7]
+   * Pattern: AB 0F 0F A7 ?? ?? ?? [7]
    * ========================================================== */
   else if (len == 7 &&
            buffer[0] == 0xAB &&
@@ -240,9 +240,9 @@ void msgHandling() {
       return;
     }
 
-    // MQTT / FSM Feed
-    if (portionCurrent < portionTarget) {
-      portionStarted = true;
+    // MQTT - FSM Feed
+    if (portionCurrent < portionTarget) {   
+      portionStarted = true;                // Kennzeichnet Fütterungsbefehl über MQTT
     }
 
     unlockRetries = 0;
