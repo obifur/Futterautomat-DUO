@@ -38,6 +38,7 @@ unsigned int wifiReconnectCount = 0;
 String eventQueue[10];
 int head = 0;
 int tail = 0;
+static unsigned long lastSend = 0;
 
 /* ===================== SERIAL2 ===================== */
 uint8_t rxBytes[64];
@@ -57,6 +58,7 @@ int portionCurrent = 0;
 int unlockRetries  = 0;
 unsigned long feedCount = 0;
 int portionTimer = 0;
+bool feedButtonPressed = false;
 
 /* ===================== FSM ===================== */
 enum FeedState {
@@ -193,7 +195,7 @@ void msgHandling() {
     lastDeviceStatus = STATUS_FEED_END;
 
     if (msgDebug) {
-      Serial.print(">>> PORTION END erkannt, count=");
+      Serial.print(">>> PORTION ENDE erkannt, TotalCount=");
       Serial.println(feedCount);
     }
 
@@ -242,7 +244,7 @@ void msgHandling() {
 
     // MQTT - FSM Feed
     if (portionCurrent < portionTarget) {   
-      portionStarted = true;                // Kennzeichnet Fütterungsbefehl über MQTT
+      portionStarted = true;                // Fütterungsbefehl über MQTT
     }
 
     unlockRetries = 0;
@@ -345,24 +347,20 @@ void feedingStateMachine() {
       break;
 
     case FEED_SIGNAL:
-      digitalWrite(FEED_PIN, HIGH);
+      digitalWrite(FEED_PIN, HIGH);                                 // Fütterung Knopf drücken -> beginnt sofort
+      feedButtonPressed = true;
       state = FEED_WAIT_START;
       stateStart = millis();
       break;
 
-    case FEED_WAIT_START:
-      // Falls vorher schon END erkannt wurde -> keine Unlock-Logik
-      if (portionFinished) {
-        state = FEED_WAIT_END;
-        stateStart = millis();
-        break;
-      }
-
-      if (millis() - stateStart > FEED_PULSE_DURATION_MS) {
+    case FEED_WAIT_START:                                           // Fütterung läuft
+      
+      if (feedButtonPressed && millis() - stateStart > FEED_PULSE_DURATION_MS) {        // Fütterung Knopf loslassen
         digitalWrite(FEED_PIN, LOW);
+        feedButtonPressed = false;
       }
       
-      // Erste Futterportion angefordert
+      // Erste Futterportion angefordert über MQTT
       if (portionStarted && portionCurrent < portionTarget) {
         portionStarted = false;
         portionCurrent++;
@@ -378,7 +376,16 @@ void feedingStateMachine() {
         break;
       }
 
-      if (millis() - stateStart > FEED_START_ACK_TIMEOUT_MS) {
+      if (portionFinished) {
+        portionFinished = false;
+
+        state = FEED_WAIT_END;
+        stateStart = millis();
+        break;
+      }
+
+      // Timeout
+      if (!feedButtonPressed && millis() - stateStart > FEED_START_ACK_TIMEOUT_MS) {
         if (unlockRetries++ >= UNLOCK_RETRY_MAX) {
           queueEvent("Abbruch: Tastensperre nicht freigegeben", "error");
           state = IDLE;
@@ -393,7 +400,7 @@ void feedingStateMachine() {
     case FEED_WAIT_END:
       if (portionFinished) {
         portionFinished = false;
-        state = (portionCurrent >= portionTarget) ? FINISHED : FEED_SIGNAL;
+        state = (portionCurrent >= portionTarget) ? FINISHED : FEED_SIGNAL;   // ggf. weitere Portion füttern
         stateStart = millis();
       }
       break;
@@ -404,19 +411,19 @@ void feedingStateMachine() {
       }
       break;
 
-    case UNLOCK_PRESS:
+    case UNLOCK_PRESS:                                    // Tastensperre Knopf drücken
       digitalWrite(LOCK_PIN, HIGH);
       state = UNLOCK_WAIT;
       stateStart = millis();
       break;
 
-    case UNLOCK_WAIT:
+    case UNLOCK_WAIT:                                    // Tastensperre Knopf halten
       if (millis() - stateStart > UNLOCK_PRESS_DURATION_MS) {
         state = UNLOCK_RELEASE;
       }
       break;
 
-    case UNLOCK_RELEASE:
+    case UNLOCK_RELEASE:                                 // Tastensperre Knopf loslassen und Fütterung starten
       digitalWrite(LOCK_PIN, LOW);
       state = FEED_SIGNAL;
       stateStart = millis();
@@ -507,7 +514,8 @@ void loop() {
 
   if (debugTiming) t1 = micros();
 
-    /* ===== MQTT LOOP ===== */
+  /* ===== MQTT LOOP ===== */
+  mqtt.loop();
   mqtt.loop();
 
   if (debugTiming) t2 = micros();
@@ -584,8 +592,9 @@ void loop() {
   if (debugTiming) t4 = micros();
 
   /* ===== SEND MQTT QUEUE ===== */
-  for (int i = 0; i < 3; i++) {
+  if (millis() - lastSend > 50) {
     processEventQueue();
+    lastSend = millis();
   }
 
   if (debugTiming) t5 = micros();
@@ -616,6 +625,6 @@ void loop() {
   }
 
   /* ===== WLAN / TCP YIELD ===== */
-  delay(1);
+  delay(2);
 
 }
