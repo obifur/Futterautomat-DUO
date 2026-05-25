@@ -24,5 +24,6 @@
 /* Debug / Environment */
 #define DEVICE_NAME      "Futtertempel-DUO"
 #define DEVICE_LOCATION  "home"
+#define FW_VERSION       "1.0.0"
 
 #endif // SECRETS_H
