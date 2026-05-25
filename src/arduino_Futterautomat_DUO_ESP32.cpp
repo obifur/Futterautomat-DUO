@@ -29,6 +29,7 @@ bool debugTiming = false;
 unsigned long lastReconnectAttempt = 0;   // Throttle -> loop()
 unsigned int mqttSendFailCount = 0;
 unsigned int mqttReconnectCount = 0;
+static unsigned long mqttDisconnectTime = 0;
 
 bool wifiWasConnected = true;
 unsigned int wifiReconnectCount = 0;
@@ -543,6 +544,15 @@ void loop() {
   /* ===== MQTT VERBINDUNG ===== */
   if (!mqtt.connected()) {
 
+    // merken, wann MQTT verloren ging
+    if (mqttDisconnectTime == 0)
+      mqttDisconnectTime = millis();
+
+    if (wifiClient.connected() && millis() - mqttDisconnectTime < 3000)
+      return;
+    
+    mqttDisconnectTime = 0;
+
     if (mqttWasConnected) {
       mqttWasConnected = false;
       if (msgDebug) {
@@ -553,7 +563,7 @@ void loop() {
       }
     }
 
-    if (millis() - lastReconnectAttempt > 5000) { // nicht ständig prüfen -> throttle
+    if (millis() - lastReconnectAttempt > 10000) { // nicht ständig prüfen -> throttle
       
       lastReconnectAttempt = millis();
     
