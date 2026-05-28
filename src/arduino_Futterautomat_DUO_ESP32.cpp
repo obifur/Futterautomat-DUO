@@ -34,12 +34,12 @@ static unsigned long mqttDisconnectTime = 0;
 bool wifiWasConnected = true;
 unsigned int wifiReconnectCount = 0;
 
-constexpr int QUEUE_SIZE = 10;            // für debug besser 20 anstatt 10
-// String eventQueue[QUEUE_SIZE];
-struct Event {
+constexpr int QUEUE_SIZE = 10;
+String eventQueue[QUEUE_SIZE];
+/* struct Event {
   char payload[384];
 };
-Event eventQueue[QUEUE_SIZE];
+Event eventQueue[QUEUE_SIZE]; */
 
 int head = 0;
 int tail = 0;
@@ -94,8 +94,8 @@ enum DeviceStatus {
 DeviceStatus lastDeviceStatus = STATUS_NONE;
 
 /* ===================== MQTT EVENT QUEUE ===================== */
-// void queueEvent(const String& msg, const String& type) {
-void queueEvent(const char* msg, const char* type) {
+void queueEvent(const String& msg, const String& type) {
+// void queueEvent(const char* msg, const char* type) {
   static JsonDocument doc;
   doc.clear();
 
@@ -119,17 +119,17 @@ void queueEvent(const char* msg, const char* type) {
     doc["wifi_rssi"] = WiFi.RSSI();
   }
 
-
-
   static char payload[384];
   serializeJson(doc, payload);
 
+  /*  size_t len = serializeJson(doc, payload, sizeof(payload));
+  payload[len] = '\0';
+  
+  strncpy(eventQueue[head].payload, payload, sizeof(eventQueue[head].payload)-1);
+  eventQueue[head].payload[sizeof(eventQueue[head].payload) - 1] = '\0'; */
 
-  // eventQueue[head] = payload;
-  strncpy(eventQueue[head].payload, payload, sizeof(eventQueue[head].payload));
-  eventQueue[head].payload[sizeof(eventQueue[head].payload) - 1] = '\0';
+  eventQueue[head] = payload;
   head = (head + 1) % QUEUE_SIZE;             // Ringpuffer‑Queue (FIFO): head = Schreibposition ; tail = Leseposition 
-
 
   // overflow protection
   if (head == tail) {
@@ -144,8 +144,8 @@ void processEventQueue() {
   if (tail == head) return;           // nichts zu senden
   if (!mqtt.connected()) return;      // nicht verbunden
   
-  //bool ok = mqtt.publish(MQTT_TOPIC_EVENT, eventQueue[tail].c_str());
-  bool ok = mqtt.publish(MQTT_TOPIC_EVENT, eventQueue[tail].payload);
+  bool ok = mqtt.publish(MQTT_TOPIC_EVENT, eventQueue[tail].c_str());
+  //bool ok = mqtt.publish(MQTT_TOPIC_EVENT, eventQueue[tail].payload);
 
   if (ok) {
     tail = (tail + 1) % QUEUE_SIZE;   // nur wenn erfolgreich
@@ -212,7 +212,6 @@ void msgHandling() {
 
     // Timer-Feed: weitere Portionen folgen
     if (len >= 7) {
-      // queueEvent("Portion " + String(portionTimer +1) + " gestartet (Timer)","info");
       char msg[80];
       snprintf(msg, sizeof(msg),
         "Portion %d gestartet (Timer)", portionTimer + 1);
@@ -380,11 +379,6 @@ void feedingStateMachine() {
         portionStarted = false;
         portionCurrent++;
 
-        /* queueEvent(
-          "Portion " + String(portionCurrent) +
-          " von " + String(portionTarget) + " gestartet",
-          "info"
-        ); */
         char msg[80];
         snprintf(msg, sizeof(msg),
           "Portion %d von %d gestartet", portionCurrent, portionTarget);
@@ -424,7 +418,7 @@ void feedingStateMachine() {
         break;
       }
       
-      if (millis() - stateStart > 5000) {
+      if (millis() - stateStart > 9000) {
         queueEvent("Timeout: Portion Ende nicht erkannt", "error");
 
         // trotzdem weiter zählen
