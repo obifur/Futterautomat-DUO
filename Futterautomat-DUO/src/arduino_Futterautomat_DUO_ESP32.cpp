@@ -35,7 +35,12 @@ bool wifiWasConnected = true;
 unsigned int wifiReconnectCount = 0;
 
 constexpr int QUEUE_SIZE = 10;            // für debug besser 20 anstatt 10
-String eventQueue[QUEUE_SIZE];
+// String eventQueue[QUEUE_SIZE];
+struct Event {
+  char payload[384];
+};
+Event eventQueue[QUEUE_SIZE];
+
 int head = 0;
 int tail = 0;
 static unsigned long lastSend = 0;
@@ -47,6 +52,7 @@ bool msgComplete = false;
 unsigned long lastByteTime = 0;
 
 bool msgDebug = false;
+bool msgInfo = false;
 
 /* ===================== PORTION FLAGS ===================== */
 bool portionStarted  = false;
@@ -88,7 +94,8 @@ enum DeviceStatus {
 DeviceStatus lastDeviceStatus = STATUS_NONE;
 
 /* ===================== MQTT EVENT QUEUE ===================== */
-void queueEvent(const String& msg, const String& type) {
+// void queueEvent(const String& msg, const String& type) {
+void queueEvent(const char* msg, const char* type) {
   static JsonDocument doc;
   doc.clear();
 
@@ -98,12 +105,15 @@ void queueEvent(const String& msg, const String& type) {
   doc["feedCount"] = feedCount; 
   doc["ts"]     = millis();
 
-  doc["version"] = FW_VERSION;
-  doc["build"]   = __DATE__ " " __TIME__;
+  if (msgDebug || msgInfo) {
+    doc["version"] = FW_VERSION;
+    doc["build"]   = __DATE__ " " __TIME__;
 
-  doc["mqttSendFailCount"]  = mqttSendFailCount;
-  doc["mqttReconnectCount"]  = mqttReconnectCount;
-  doc["WifiReconnectCount"]  = wifiReconnectCount;
+    doc["mqttSendFailCount"]  = mqttSendFailCount;
+    doc["mqttReconnectCount"]  = mqttReconnectCount;
+    doc["WifiReconnectCount"]  = wifiReconnectCount;
+  }
+  msgInfo = false;
   
   if (WiFi.status() == WL_CONNECTED) {
     doc["wifi_rssi"] = WiFi.RSSI();
@@ -115,7 +125,9 @@ void queueEvent(const String& msg, const String& type) {
   serializeJson(doc, payload);
 
 
-  eventQueue[head] = payload;
+  // eventQueue[head] = payload;
+  strncpy(eventQueue[head].payload, payload, sizeof(eventQueue[head].payload));
+  eventQueue[head].payload[sizeof(eventQueue[head].payload) - 1] = '\0';
   head = (head + 1) % QUEUE_SIZE;             // Ringpuffer‑Queue (FIFO): head = Schreibposition ; tail = Leseposition 
 
 
@@ -132,7 +144,8 @@ void processEventQueue() {
   if (tail == head) return;           // nichts zu senden
   if (!mqtt.connected()) return;      // nicht verbunden
   
-  bool ok = mqtt.publish(MQTT_TOPIC_EVENT, eventQueue[tail].c_str());
+  //bool ok = mqtt.publish(MQTT_TOPIC_EVENT, eventQueue[tail].c_str());
+  bool ok = mqtt.publish(MQTT_TOPIC_EVENT, eventQueue[tail].payload);
 
   if (ok) {
     tail = (tail + 1) % QUEUE_SIZE;   // nur wenn erfolgreich
@@ -199,7 +212,11 @@ void msgHandling() {
 
     // Timer-Feed: weitere Portionen folgen
     if (len >= 7) {
-      queueEvent("Portion " + String(portionTimer +1) + " gestartet (Timer)","info");
+      // queueEvent("Portion " + String(portionTimer +1) + " gestartet (Timer)","info");
+      char msg[80];
+      snprintf(msg, sizeof(msg),
+        "Portion %d gestartet (Timer)", portionTimer + 1);
+      queueEvent(msg, "info");
     }
 
     // Letzte Portion erkannt
@@ -363,11 +380,15 @@ void feedingStateMachine() {
         portionStarted = false;
         portionCurrent++;
 
-        queueEvent(
+        /* queueEvent(
           "Portion " + String(portionCurrent) +
           " von " + String(portionTarget) + " gestartet",
           "info"
-        );
+        ); */
+        char msg[80];
+        snprintf(msg, sizeof(msg),
+          "Portion %d von %d gestartet", portionCurrent, portionTarget);
+        queueEvent(msg, "info");
 
         state = FEED_WAIT_END;
         stateStart = millis();
@@ -394,18 +415,39 @@ void feedingStateMachine() {
         }
       }
       break;
-
-    case FEED_WAIT_END:
+    
+    case FEED_WAIT_END:         // Warten auf das Ende einer aktiv gestarteten Portion (MQTT / manuell)
       if (portionFinished) {
         portionFinished = false;
         state = (portionCurrent >= portionTarget) ? FINISHED : FEED_SIGNAL;   // ggf. weitere Portion füttern
         stateStart = millis();
+        break;
       }
-      break;
+      
+      if (millis() - stateStart > 5000) {
+        queueEvent("Timeout: Portion Ende nicht erkannt", "error");
 
-    case FEED_WAIT_END_TIMER:
+        // trotzdem weiter zählen
+        portionCurrent++;
+        state = (portionCurrent >= portionTarget) ? FINISHED : FEED_SIGNAL; 
+
+        stateStart = millis();
+      }
+      break;      
+
+    case FEED_WAIT_END_TIMER:   // Warten auf Ende bei automatisch gestarteter (Timer-)Fütterung
       if (portionFinished) {
         portionFinished = false;
+        stateStart = millis();
+        break;
+      }
+      
+      if (millis() - stateStart > 10000) {
+        queueEvent("Timeout: Portion Ende nicht erkannt", "error");
+
+        // zurück in IDLE
+        state = IDLE;
+        stateStart = millis();
       }
       break;
 
@@ -449,8 +491,10 @@ void mqttCallback(char* topic, byte* payload, unsigned int len) {
     if (p > 0 && state == IDLE) startFeeding(p);
   }
 
-  if (strcmp(cmd, "info") == 0)
+  if (strcmp(cmd, "info") == 0) {
+    msgInfo = !msgInfo;
     queueEvent("Info", "info");
+  }
 
   if (strcmp(cmd, "debug") == 0) {
     msgDebug = !msgDebug;
@@ -531,10 +575,12 @@ void loop() {
         queueEvent("WIFI neu verbunden", "debug");
       }
     }
-  } 
-  else {
+  } else {
     if (wifiWasConnected) {                // Wifi ist nicht verbunden
       wifiWasConnected = false;
+      queueEvent("WIFI verloren, versuche Reconnect...", "error");
+      WiFi.disconnect();
+      WiFi.begin(WIFI_SSID, WIFI_PASSWORD);  // Neu verbinden
     }
   }
 
@@ -543,64 +589,67 @@ void loop() {
 
   /* ===== MQTT VERBINDUNG ===== */
   if (!mqtt.connected()) {
-
-    // merken, wann MQTT verloren ging
-    if (mqttDisconnectTime == 0)
-      mqttDisconnectTime = millis();
-
-    if (wifiClient.connected() && millis() - mqttDisconnectTime < 3000)
-      return;
     
-    mqttDisconnectTime = 0;
+    // Zeitpunkt merken, wann MQTT verloren ging
+    if (mqttDisconnectTime == 0)  mqttDisconnectTime = millis();
 
-    if (mqttWasConnected) {
-      mqttWasConnected = false;
-      if (msgDebug) {
-        int state = mqtt.state();
-        // -4=TIMEOUT, -3=LOST, -2=FAILED, -1=DISCONNECTED, 1=BAD_PROTOCOL,
-        // 2=BAD_CLIENT_ID, 3=UNAVAILABLE, 4=BAD_CREDENTIALS, 5=UNAUTHORIZED
-        queueEvent("MQTT verloren, state=" + String(state), "debug");
+    // Reconnect erlauben?
+    bool allowReconnect = (!wifiClient.connected()) || (millis() - mqttDisconnectTime >= 3000);
+
+    if (allowReconnect) {
+
+      if (mqttWasConnected) {
+        mqttWasConnected = false;
+        
+        if (msgDebug) {
+          int state = mqtt.state();
+          // -4=TIMEOUT, -3=LOST, -2=FAILED, -1=DISCONNECTED, 1=BAD_PROTOCOL,
+          // 2=BAD_CLIENT_ID, 3=UNAVAILABLE, 4=BAD_CREDENTIALS, 5=UNAUTHORIZED
+
+          char msg[40];
+          snprintf(msg, sizeof(msg), 
+            "MQTT verloren, state=%d", state); 
+          queueEvent(msg, "debug");
+        }
       }
-    }
 
-    if (millis() - lastReconnectAttempt > 10000) { // nicht ständig prüfen -> throttle
+      if (millis() - lastReconnectAttempt > 5000) {     // nicht ständig prüfen -> throttle
+        
+        lastReconnectAttempt = millis();
       
-      lastReconnectAttempt = millis();
-    
-      if (mqtt.connect(
-        MQTT_CLIENT_ID,
-        MQTT_USERNAME,
-        MQTT_PASSWORD,
-        MQTT_TOPIC_STATUS,
-        1, true,
-        MQTT_LWT_MSG)) {
+        if (mqtt.connect(
+          MQTT_CLIENT_ID, 
+          MQTT_USERNAME, 
+          MQTT_PASSWORD,
+          MQTT_TOPIC_STATUS, 
+          1,                // QOS für LWT
+          true,             // retained
+          MQTT_LWT_MSG,
+          false )) {        // cleanSession = false
 
-        // TCP Keepalive direkt nach Connect setzen
-        if (wifiClient.connected()) {
-            int sock = wifiClient.fd();
-            if (sock >= 0) {
-                int ka = 1, idle = 15, intvl = 5, cnt = 3;
-                setsockopt(sock, SOL_SOCKET,  SO_KEEPALIVE,  &ka,    sizeof(ka));
-                setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE,  &idle,  sizeof(idle));
-                setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
-                setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT,   &cnt,   sizeof(cnt));
-            }
-        }
-
-        mqtt.subscribe(MQTT_TOPIC_SUB);
-
-        if (msgDebug) { 
-          queueEvent("MQTT neu verbunden", "debug");
-        }
-
-        if (mqttEverConnected) {
-            mqttReconnectCount++;
+          // TCP Keepalive direkt nach Connect setzen
+          if (wifiClient.connected()) {
+              int sock = wifiClient.fd();
+              if (sock >= 0) {
+                  int ka = 1, idle = 10, intvl = 3, cnt = 3;    // 10s Idle, 3s Intervall
+                  setsockopt(sock, SOL_SOCKET,  SO_KEEPALIVE,  &ka,    sizeof(ka));
+                  setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE,  &idle,  sizeof(idle));
+                  setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
+                  setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT,   &cnt,   sizeof(cnt));
+              }
           }
 
-        mqttEverConnected = true;
-        mqttWasConnected = true;
+          mqtt.subscribe(MQTT_TOPIC_SUB);
 
-        mqtt.publish(MQTT_TOPIC_STATUS, "online", true);
+          if (msgDebug) queueEvent("MQTT neu verbunden", "debug");
+          if (mqttEverConnected) mqttReconnectCount++;
+
+          mqttEverConnected = true;
+          mqttWasConnected = true;
+          mqttDisconnectTime = 0;
+
+          mqtt.publish(MQTT_TOPIC_STATUS, "online", true);
+        }
       }
     }
   }
@@ -625,6 +674,7 @@ void loop() {
 
   /* ===== FSM ===== */
   feedingStateMachine();
+  
 
   /* ===== BACKUP MQTT LOOP ===== */
   static unsigned long lastMqtt = 0;
@@ -655,6 +705,6 @@ void loop() {
   }
 
   /* ===== WLAN / TCP YIELD ===== */
-  delay(1);
+  delay(0);
 
 }
