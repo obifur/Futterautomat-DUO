@@ -635,14 +635,14 @@ void loop() {
 
           mqtt.subscribe(MQTT_TOPIC_SUB);
 
-          if (msgDebug) queueEvent("MQTT neu verbunden", "debug");
+          queueEvent("MQTT neu verbunden", "debug");
           if (mqttEverConnected) mqttReconnectCount++;
 
           mqttEverConnected = true;
           mqttWasConnected = true;
           mqttDisconnectTime = 0;
 
-          mqtt.publish(MQTT_TOPIC_STATUS, "online", true);
+          queueEvent("online", "status");
         }
       }
     }
