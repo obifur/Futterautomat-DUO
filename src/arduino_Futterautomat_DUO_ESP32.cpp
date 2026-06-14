@@ -346,7 +346,7 @@ void startFeeding(int portions) {
   portionStarted  = false;
   portionFinished = false;
 
-  // queueEvent("Starte Fütterung: " + String(portionTarget) + " Portion(en)", "cmd");
+  // queueEvent("Starte Fütterung: " + String(portionTarget) + " Portion(en)", "info");
 
   state = FEED_SIGNAL;
   stateStart = millis();
@@ -500,7 +500,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int len) {
   }
 
   if (strcmp(cmd, "reset") == 0) {
-    queueEvent("ESP wird neu gestartet", "cmd");
+    queueEvent("ESP wird neu gestartet", "info");
     delay(100);
     ESP.restart();
   }
