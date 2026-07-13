@@ -124,12 +124,6 @@ void queueEvent(const String& msg, const String& type) {
   static char payload[384];
   serializeJson(doc, payload);
 
-  /*  size_t len = serializeJson(doc, payload, sizeof(payload));
-  payload[len] = '\0';
-  
-  strncpy(eventQueue[head].payload, payload, sizeof(eventQueue[head].payload)-1);
-  eventQueue[head].payload[sizeof(eventQueue[head].payload) - 1] = '\0'; */
-
   eventQueue[head] = payload;
   head = (head + 1) % QUEUE_SIZE;             // Ringpuffer‑Queue (FIFO): head = Schreibposition ; tail = Leseposition 
 
@@ -551,8 +545,33 @@ void loop() {
   if (debugTiming) t1 = micros();
 
 
+  /* ===== TCP SOCKET ÜBERWACHUNG ===== */
+  if (mqtt.connected() && !wifiClient.connected()) {      // TCP Socket verloren obwohl MQTT noch connected
+    queueEvent("TCP weg obwohl MQTT connected", "debug");
+    
+    mqtt.disconnect();
+  }
+
+
   /* ===== MQTT LOOP ===== */
   mqtt.loop();                        // sofort
+
+  /* ===== MQTT ALIVE ===== */
+  static unsigned long lastAlive = 0;
+
+  if (mqtt.connected() && 
+    wifiClient.connected() && 
+    millis() - lastAlive > 10000) 
+    {
+    bool ok = mqtt.publish(MQTT_TOPIC_STATUS,"online",true);
+
+    queueEvent(
+      ok ? "online" : "alive failed",
+      "debug"
+    );
+
+    lastAlive = millis();
+  }
 
   if (debugTiming) t2 = micros();
 
@@ -600,14 +619,15 @@ void loop() {
           // -4=TIMEOUT, -3=LOST, -2=FAILED, -1=DISCONNECTED, 1=BAD_PROTOCOL,
           // 2=BAD_CLIENT_ID, 3=UNAVAILABLE, 4=BAD_CREDENTIALS, 5=UNAUTHORIZED
    
-          char msg[128];
+          char msg[160];
           snprintf(msg,sizeof(msg),
-              "MQTT verloren state=%d wifi=%d tcp=%d uptime=%lu ch=%d",
+              "MQTT verloren state=%d wifi=%d tcp=%d uptime=%lu ch=%d bssid=%s",
               mqtt.state(),
               WiFi.status(),
               wifiClient.connected(),
               millis()-mqttConnectTs,
-              WiFi.channel());
+              WiFi.channel(),
+              WiFi.BSSIDstr().c_str());
 
           queueEvent(msg, "debug");
         }
@@ -625,12 +645,12 @@ void loop() {
           1,                // QOS für LWT
           true,             // retained
           MQTT_LWT_MSG,
-          true )) {        // cleanSession = false
+          true )) {        // cleanSession
 
           mqttConnectTs = millis();
 
           // TCP Keepalive direkt nach Connect setzen
-          if (wifiClient.connected()) {
+/*           if (wifiClient.connected()) {
               int sock = wifiClient.fd();
               if (sock >= 0) {
                   int ka = 1, idle = 10, intvl = 3, cnt = 3;    // 10s Idle, 3s Intervall
@@ -639,7 +659,7 @@ void loop() {
                   setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
                   setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT,   &cnt,   sizeof(cnt));
               }
-          }
+          } */
 
           mqtt.subscribe(MQTT_TOPIC_SUB);
 
@@ -679,12 +699,12 @@ void loop() {
   
 
   /* ===== BACKUP MQTT LOOP ===== */
-  static unsigned long lastMqtt = 0;
+ /*  static unsigned long lastMqtt = 0;
   if (mqtt.connected() && millis() - lastMqtt > 5) {
     mqtt.loop();                      // garantiert alle 5ms
     lastMqtt = millis();
   }
-
+ */
 
   /* ===== TIMING REPORT ===== */
   static unsigned long lastTimingReport = 0;
@@ -707,6 +727,12 @@ void loop() {
   }
 
   /* ===== WLAN / TCP YIELD ===== */
-  delay(0);
+  delay(1);
 
 }
+
+/* BEFUND:
+Die MQTT-Abbrüche werden nicht durch die Anwendung, die FSM oder das WLAN verursacht; 
+vielmehr verschwindet sporadisch der TCP-Socket des WiFiClient trotz stabiler WLAN-Verbindung, 
+worauf MQTT lediglich reagiert und die Verbindung neu aufbaut.
+ */
