@@ -16,6 +16,7 @@
 /* ===== MQTT TOPICS ===== */
 #define MQTT_TOPIC_STATUS "futtertempel/duo/status"
 #define MQTT_TOPIC_EVENT  "futtertempel/duo/event"
+#define MQTT_TOPIC_SUB    "futtertempel/duo/cmd"
 
 /* ===== OPTIONAL ===== */
 #define MQTT_LWT_MSG      "offline"   // Last Will

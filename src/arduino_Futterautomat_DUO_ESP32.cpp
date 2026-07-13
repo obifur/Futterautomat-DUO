@@ -346,7 +346,7 @@ void startFeeding(int portions) {
   portionStarted  = false;
   portionFinished = false;
 
-  // queueEvent("Starte Fütterung: " + String(portionTarget) + " Portion(en)", "info");
+  // queueEvent("Starte Fütterung: " + String(portionTarget) + " Portion(en)", "cmd");
 
   state = FEED_SIGNAL;
   stateStart = millis();
@@ -500,7 +500,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int len) {
   }
 
   if (strcmp(cmd, "reset") == 0) {
-    queueEvent("ESP wird neu gestartet", "info");
+    queueEvent("ESP wird neu gestartet", "cmd");
     delay(100);
     ESP.restart();
   }
@@ -633,16 +633,16 @@ void loop() {
               }
           }
 
-          mqtt.subscribe(MQTT_TOPIC_STATUS);
+          mqtt.subscribe(MQTT_TOPIC_SUB);
 
-          queueEvent("MQTT neu verbunden", "debug");
+          if (msgDebug) queueEvent("MQTT neu verbunden", "debug");
           if (mqttEverConnected) mqttReconnectCount++;
 
           mqttEverConnected = true;
           mqttWasConnected = true;
           mqttDisconnectTime = 0;
 
-          queueEvent("online", "status");
+          mqtt.publish(MQTT_TOPIC_STATUS, "online", true);
         }
       }
     }
