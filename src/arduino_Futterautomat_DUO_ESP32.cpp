@@ -633,7 +633,7 @@ void loop() {
               }
           }
 
-          mqtt.subscribe(MQTT_TOPIC_SUB);
+          mqtt.subscribe(MQTT_TOPIC_STATUS);
 
           queueEvent("MQTT neu verbunden", "debug");
           if (mqttEverConnected) mqttReconnectCount++;
