@@ -597,10 +597,14 @@ void loop() {
           int state = mqtt.state();
           // -4=TIMEOUT, -3=LOST, -2=FAILED, -1=DISCONNECTED, 1=BAD_PROTOCOL,
           // 2=BAD_CLIENT_ID, 3=UNAVAILABLE, 4=BAD_CREDENTIALS, 5=UNAUTHORIZED
-
-          char msg[40];
-          snprintf(msg, sizeof(msg), 
-            "MQTT verloren, state=%d", state); 
+   
+          char msg[80];
+          snprintf(msg,sizeof(msg),
+            "MQTT verloren state=%d wifi=%d tcp=%d",
+            mqtt.state(),
+            WiFi.status(),
+            wifiClient.connected());
+ 
           queueEvent(msg, "debug");
         }
       }
@@ -617,7 +621,7 @@ void loop() {
           1,                // QOS für LWT
           true,             // retained
           MQTT_LWT_MSG,
-          false )) {        // cleanSession = false
+          true )) {        // cleanSession = false
 
           // TCP Keepalive direkt nach Connect setzen
           if (wifiClient.connected()) {
@@ -684,7 +688,7 @@ void loop() {
 
     char msg[128];
     snprintf(msg, sizeof(msg),
-      "t[µs] wd %lu wifi %lu mqttConn %lu mqttLoop %lu mqttQueue %lu",
+      "t[µs] wd %lu mqttLoop %lu wifi %lu mqttConn %lu queue %lu",
       t1 - t0,          // watchdog + start
       t2 - t1,          // mqtt.loop
       t3 - t2,          // wifi
