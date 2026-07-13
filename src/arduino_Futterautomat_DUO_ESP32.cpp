@@ -31,6 +31,8 @@ unsigned int mqttSendFailCount = 0;
 unsigned int mqttReconnectCount = 0;
 static unsigned long mqttDisconnectTime = 0;
 
+unsigned long mqttConnectTs = 0;
+
 bool wifiWasConnected = true;
 unsigned int wifiReconnectCount = 0;
 
@@ -529,7 +531,7 @@ void setup() {
 
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
   mqtt.setCallback(mqttCallback);
-  mqtt.setKeepAlive(60);
+  mqtt.setKeepAlive(15);
   mqtt.setBufferSize(512);
 
   Serial.println("Watchdog aktiv");
@@ -598,13 +600,15 @@ void loop() {
           // -4=TIMEOUT, -3=LOST, -2=FAILED, -1=DISCONNECTED, 1=BAD_PROTOCOL,
           // 2=BAD_CLIENT_ID, 3=UNAVAILABLE, 4=BAD_CREDENTIALS, 5=UNAUTHORIZED
    
-          char msg[80];
+          char msg[128];
           snprintf(msg,sizeof(msg),
-            "MQTT verloren state=%d wifi=%d tcp=%d",
-            mqtt.state(),
-            WiFi.status(),
-            wifiClient.connected());
- 
+              "MQTT verloren state=%d wifi=%d tcp=%d uptime=%lu ch=%d",
+              mqtt.state(),
+              WiFi.status(),
+              wifiClient.connected(),
+              millis()-mqttConnectTs,
+              WiFi.channel());
+
           queueEvent(msg, "debug");
         }
       }
@@ -622,6 +626,8 @@ void loop() {
           true,             // retained
           MQTT_LWT_MSG,
           true )) {        // cleanSession = false
+
+          mqttConnectTs = millis();
 
           // TCP Keepalive direkt nach Connect setzen
           if (wifiClient.connected()) {
