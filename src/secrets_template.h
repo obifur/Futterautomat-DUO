@@ -16,7 +16,6 @@
 /* ===== MQTT TOPICS ===== */
 #define MQTT_TOPIC_STATUS "futtertempel/duo/status"
 #define MQTT_TOPIC_EVENT  "futtertempel/duo/event"
-#define MQTT_TOPIC_SUB    "futtertempel/duo/cmd"
 
 /* ===== OPTIONAL ===== */
 #define MQTT_LWT_MSG      "offline"   // Last Will
@@ -24,6 +23,6 @@
 /* Debug / Environment */
 #define DEVICE_NAME      "Futtertempel-DUO"
 #define DEVICE_LOCATION  "home"
-#define FW_VERSION       "1.0.0"
+#define FW_VERSION       "1.3.0"
 
 #endif // SECRETS_H
